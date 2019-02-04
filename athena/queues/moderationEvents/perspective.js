@@ -1,12 +1,11 @@
 // @flow
+const debug = require('debug')('athena:queue:moderation-events:perspective');
 require('now-env');
 import axios from 'axios';
 const PERSPECTIVE_API_KEY = process.env.PERSPECTIVE_API_KEY;
 
 if (!PERSPECTIVE_API_KEY) {
-  console.log(
-    'No API key for Perspective provided, not sending moderation events.'
-  );
+  debug('No API key for Perspective provided, not sending moderation events.');
 }
 
 export default async (text: string) => {
@@ -30,7 +29,7 @@ export default async (text: string) => {
   });
 
   // if something failed?
-  if (!request || !request.data) return;
+  if (!request || !request.data) return null;
 
   // get the scores from the request
   const { attributeScores } = request.data;
@@ -46,7 +45,7 @@ export default async (text: string) => {
   const { value } = TOXICITY.summaryScore;
 
   // if the toxicity probability is above 50%, alert us
-  if (value > 0.5) return value;
+  if (value > 0.9) return value;
 
   return null;
 };

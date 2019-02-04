@@ -4,29 +4,28 @@ import compose from 'recompose/compose';
 import Textarea from 'react-textarea-autosize';
 import { withRouter } from 'react-router';
 import { connect } from 'react-redux';
-import isURL from 'validator/lib/isURL';
 import debounce from 'debounce';
+import queryString from 'query-string';
 import { KeyBindingUtil } from 'draft-js';
-import { URLS } from '../../helpers/regexps';
-import { track } from '../../helpers/events';
 import { closeComposer } from '../../actions/composer';
 import { changeActiveThread } from '../../actions/dashboardFeed';
 import { addToastWithTimeout } from '../../actions/toasts';
-import Editor from '../draftjs-editor';
+import Editor from '../rich-text-editor';
 import {
   toPlainText,
   fromPlainText,
   toJSON,
   toState,
+  isAndroid,
 } from 'shared/draft-utils';
 import getComposerCommunitiesAndChannels from 'shared/graphql/queries/composer/getComposerCommunitiesAndChannels';
 import type { GetComposerType } from 'shared/graphql/queries/composer/getComposerCommunitiesAndChannels';
 import publishThread from 'shared/graphql/mutations/thread/publishThread';
-import { getLinkPreviewFromUrl } from '../../helpers/utils';
 import { TextButton, Button } from '../buttons';
 import { FlexRow } from '../../components/globals';
 import { LoadingSelect } from '../loading';
 import Titlebar from '../../views/titlebar';
+import type { Dispatch } from 'redux';
 import {
   Container,
   ThreadDescription,
@@ -42,8 +41,8 @@ import {
   sortChannels,
   getDefaultActiveChannel,
 } from './utils';
-
-const ENDS_IN_WHITESPACE = /(\s|\n)$/;
+import { events, track } from 'src/helpers/analytics';
+import { ESC, ENTER } from 'src/helpers/keycodes';
 
 type State = {
   title: string,
@@ -53,10 +52,6 @@ type State = {
   activeCommunity: ?string,
   activeChannel: ?string,
   isPublishing: boolean,
-  linkPreview: ?Object,
-  linkPreviewTrueUrl: ?string,
-  linkPreviewLength: number,
-  fetchingLinkPreview: boolean,
   postWasPublished: boolean,
 };
 
@@ -67,7 +62,7 @@ type Props = {
     loading: boolean,
   },
   isOpen: boolean,
-  dispatch: Function,
+  dispatch: Dispatch<Object>,
   publishThread: Function,
   history: Object,
   location: Object,
@@ -81,6 +76,13 @@ type Props = {
 
 const LS_BODY_KEY = 'last-thread-composer-body';
 const LS_TITLE_KEY = 'last-thread-composer-title';
+const LS_COMPOSER_EXPIRE = 'last-thread-composer-expire';
+
+const ONE_DAY = (): string => {
+  const time = new Date().getTime() + 60 * 60 * 24 * 1000;
+  return time.toString();
+};
+
 // We persist the body and title to localStorage
 // so in case the app crashes users don't loose content
 class ComposerWithData extends Component<Props, State> {
@@ -89,32 +91,20 @@ class ComposerWithData extends Component<Props, State> {
   constructor(props) {
     super(props);
 
-    let storedBody;
-    let storedTitle;
-    if (localStorage) {
-      try {
-        storedBody = toState(
-          JSON.parse(localStorage.getItem(LS_BODY_KEY) || '')
-        );
-        storedTitle = localStorage.getItem(LS_TITLE_KEY);
-      } catch (err) {
-        localStorage.removeItem(LS_BODY_KEY);
-        localStorage.removeItem(LS_TITLE_KEY);
-      }
-    }
+    let { storedBody, storedTitle } = this.getTitleAndBody();
+
+    const { activeCommunitySlug, activeChannelSlug } = queryString.parse(
+      props.location.search
+    );
 
     this.state = {
       title: storedTitle || '',
       body: storedBody || fromPlainText(''),
       availableCommunities: [],
       availableChannels: [],
-      activeCommunity: '',
-      activeChannel: '',
+      activeCommunity: activeCommunitySlug || '',
+      activeChannel: activeChannelSlug || '',
       isPublishing: false,
-      linkPreview: null,
-      linkPreviewTrueUrl: '',
-      linkPreviewLength: 0,
-      fetchingLinkPreview: false,
       postWasPublished: false,
     };
 
@@ -128,10 +118,43 @@ class ComposerWithData extends Component<Props, State> {
     );
   }
 
+  removeStorage = () => {
+    localStorage.removeItem(LS_BODY_KEY);
+    localStorage.removeItem(LS_TITLE_KEY);
+    localStorage.removeItem(LS_COMPOSER_EXPIRE);
+  };
+
+  getTitleAndBody = () => {
+    let storedBody;
+    let storedTitle;
+
+    if (localStorage) {
+      try {
+        const expireTime = localStorage.getItem(LS_COMPOSER_EXPIRE);
+        const currTime = new Date().getTime().toString();
+        /////if current time is greater than valid till of text then please expire title/body back to ''
+        if (expireTime && currTime > expireTime) {
+          this.removeStorage();
+        } else {
+          storedBody = toState(
+            JSON.parse(localStorage.getItem(LS_BODY_KEY) || '')
+          );
+          storedTitle = localStorage.getItem(LS_TITLE_KEY);
+        }
+      } catch (err) {
+        this.removeStorage();
+      }
+    }
+    return {
+      storedBody,
+      storedTitle,
+    };
+  };
+
   handleIncomingProps = props => {
     const { user } = props.data;
     // if the user doesn't exist, bust outta here
-    if (!user || !user.id) return;
+    if (!user || !user.id || !user.communityConnection) return;
 
     const hasCommunities =
       user.communityConnection.edges &&
@@ -198,20 +221,7 @@ class ComposerWithData extends Component<Props, State> {
   };
 
   componentWillMount() {
-    let storedBody;
-    let storedTitle;
-    if (localStorage) {
-      try {
-        storedBody = toState(
-          JSON.parse(localStorage.getItem(LS_BODY_KEY) || '')
-        );
-        storedTitle = localStorage.getItem(LS_TITLE_KEY);
-      } catch (err) {
-        localStorage.removeItem(LS_BODY_KEY);
-        localStorage.removeItem(LS_TITLE_KEY);
-      }
-    }
-
+    let { storedBody, storedTitle } = this.getTitleAndBody();
     this.setState({
       title: this.state.title || storedTitle || '',
       body: this.state.body || storedBody || '',
@@ -220,6 +230,7 @@ class ComposerWithData extends Component<Props, State> {
 
   componentDidMount() {
     this.handleIncomingProps(this.props);
+    track(events.THREAD_CREATED_INITED);
     // $FlowIssue
     document.addEventListener('keydown', this.handleKeyPress, false);
   }
@@ -238,25 +249,35 @@ class ComposerWithData extends Component<Props, State> {
   }
 
   handleKeyPress = e => {
-    const esc = e.keyCode === 27;
-    const cmdEnter = e.keyCode === 13 && KeyBindingUtil.hasCommandModifier(e);
+    const esc = e.keyCode === ESC;
+    const cmdEnter =
+      e.keyCode === ENTER && KeyBindingUtil.hasCommandModifier(e);
 
     if (esc) {
       // Community/channel view
       this.closeComposer();
       // Dashboard
-      this.props.dispatch(changeActiveThread(null));
+      this.activateLastThread();
       return;
     }
 
     if (cmdEnter) return this.publishThread();
   };
 
+  activateLastThread = () => {
+    // we get the last thread id from the query params and dispatch it
+    // as the active thread.
+    const { location } = this.props;
+    const { t: threadId } = queryString.parse(location.search);
+
+    this.props.dispatch(changeActiveThread(threadId));
+  };
+
   changeTitle = e => {
     const title = e.target.value;
     this.persistTitleToLocalStorageWithDebounce(title);
     if (/\n$/g.test(title)) {
-      this.bodyEditor.focus();
+      this.bodyEditor.focus && this.bodyEditor.focus();
       return;
     }
     this.setState({
@@ -265,7 +286,6 @@ class ComposerWithData extends Component<Props, State> {
   };
 
   changeBody = body => {
-    this.listenForUrl(body);
     this.persistBodyToLocalStorageWithDebounce(body);
     this.setState({
       body,
@@ -275,14 +295,20 @@ class ComposerWithData extends Component<Props, State> {
   componentWillUpdate(next) {
     const currChannelLength =
       this.props.data.user &&
+      this.props.data.user.channelConnection &&
       this.props.data.user.channelConnection.edges.length;
     const nextChannelLength =
-      next.data.user && next.data.user.channelConnection.edges.length;
+      next.data.user &&
+      next.data.user.channelConnection &&
+      next.data.user.channelConnection.edges.length;
     const currCommunityLength =
       this.props.data.user &&
+      this.props.data.user.communityConnection &&
       this.props.data.user.communityConnection.edges.length;
     const nextCommunityLength =
-      next.data.user && next.data.user.communityConnection.edges.length;
+      next.data.user &&
+      next.data.user.communityConnection &&
+      next.data.user.communityConnection.edges.length;
 
     if (
       (this.props.data.loading && !next.data.loading) ||
@@ -307,33 +333,46 @@ class ComposerWithData extends Component<Props, State> {
 
   clearEditorStateAfterPublish = () => {
     try {
-      localStorage.removeItem(LS_BODY_KEY);
-      localStorage.removeItem(LS_TITLE_KEY);
+      this.removeStorage();
     } catch (err) {
       console.error(err);
     }
   };
 
+  onCancelClick = () => {
+    this.activateLastThread();
+  };
+
+  handleTitleBodyChange = titleOrBody => {
+    if (titleOrBody === 'body') {
+      localStorage.setItem(
+        LS_BODY_KEY,
+        JSON.stringify(toJSON(this.state.body))
+      );
+    } else {
+      localStorage.setItem(LS_TITLE_KEY, this.state.title);
+    }
+    localStorage.setItem(LS_COMPOSER_EXPIRE, ONE_DAY());
+  };
+
   persistBodyToLocalStorageWithDebounce = body => {
-    return localStorage.setItem(
-      LS_BODY_KEY,
-      JSON.stringify(toJSON(this.state.body))
-    );
+    if (!localStorage) return;
+    this.handleTitleBodyChange('body');
   };
 
   persistTitleToLocalStorageWithDebounce = title => {
-    return localStorage.setItem(LS_TITLE_KEY, this.state.title);
+    if (!localStorage) return;
+    this.handleTitleBodyChange('title');
   };
 
   persistTitleToLocalStorage = title => {
-    return localStorage.setItem(LS_TITLE_KEY, this.state.title);
+    if (!localStorage) return;
+    this.handleTitleBodyChange('title');
   };
 
   persistBodyToLocalStorage = body => {
-    return localStorage.setItem(
-      LS_BODY_KEY,
-      JSON.stringify(toJSON(this.state.body))
-    );
+    if (!localStorage) return;
+    this.handleTitleBodyChange('body');
   };
 
   setActiveCommunity = e => {
@@ -402,38 +441,24 @@ class ComposerWithData extends Component<Props, State> {
 
     // define new constants in order to construct the proper shape of the
     // input for the publishThread mutation
-    const {
-      activeChannel,
-      activeCommunity,
-      title,
-      body,
-      linkPreview,
-      linkPreviewTrueUrl,
-    } = this.state;
+    const { activeChannel, activeCommunity, title, body } = this.state;
     const channelId = activeChannel;
     const communityId = activeCommunity;
     const jsonBody = toJSON(body);
 
     const content = {
       title: title.trim(),
-      body: JSON.stringify(jsonBody),
+      body: isAndroid() ? toPlainText(body) : JSON.stringify(jsonBody),
     };
-
-    const attachments = [];
-    if (linkPreview) {
-      const attachmentData = JSON.stringify({
-        ...linkPreview,
-        trueUrl: linkPreviewTrueUrl,
-      });
-      attachments.push({
-        attachmentType: 'linkPreview',
-        data: attachmentData,
-      });
-    }
 
     // Get the images
     const filesToUpload = Object.keys(jsonBody.entityMap)
-      .filter(key => jsonBody.entityMap[key].type === 'image')
+      .filter(
+        key =>
+          jsonBody.entityMap[key].type.toLowerCase() === 'image' &&
+          jsonBody.entityMap[key].data.file &&
+          jsonBody.entityMap[key].data.file.constructor === File
+      )
       .map(key => jsonBody.entityMap[key].data.file);
 
     // this.props.mutate comes from a higher order component defined at the
@@ -441,9 +466,10 @@ class ComposerWithData extends Component<Props, State> {
     const thread = {
       channelId,
       communityId,
-      type: 'DRAFTJS',
+      // NOTE(@mxstbr): On android we send plain text content
+      // which is parsed as markdown to draftjs on the server
+      type: isAndroid() ? 'TEXT' : 'DRAFTJS',
       content,
-      attachments,
       filesToUpload,
     };
 
@@ -459,7 +485,6 @@ class ComposerWithData extends Component<Props, State> {
         // get the thread id to redirect the user
         const id = data.publishThread.id;
 
-        track('thread', 'published', null);
         this.clearEditorStateAfterPublish();
 
         // stop the loading spinner on the publish button
@@ -492,68 +517,6 @@ class ComposerWithData extends Component<Props, State> {
       });
   };
 
-  listenForUrl = state => {
-    const { linkPreview, linkPreviewLength } = this.state;
-    if (linkPreview !== null) return;
-
-    const lastChangeType = state.getLastChangeType();
-    if (
-      lastChangeType !== 'backspace-character' &&
-      lastChangeType !== 'insert-characters'
-    ) {
-      return;
-    }
-
-    const text = toPlainText(state);
-
-    if (!ENDS_IN_WHITESPACE.test(text)) return;
-
-    const toCheck = text.match(URLS);
-
-    if (toCheck) {
-      const len = toCheck.length;
-      if (linkPreviewLength === len) return; // no new links, don't recheck
-
-      let urlToCheck = toCheck[len - 1].trim();
-
-      if (!/^https?:\/\//i.test(urlToCheck)) {
-        urlToCheck = 'https://' + urlToCheck;
-      }
-
-      if (!isURL(urlToCheck)) return;
-
-      this.setState({ fetchingLinkPreview: true });
-
-      getLinkPreviewFromUrl(urlToCheck)
-        .then(data =>
-          this.setState(prevState => ({
-            linkPreview: { ...data, trueUrl: urlToCheck },
-            linkPreviewTrueUrl: urlToCheck,
-            linkPreviewLength: prevState.linkPreviewLength + 1,
-            fetchingLinkPreview: false,
-          }))
-        )
-        .catch(() => {
-          this.setState({
-            fetchingLinkPreview: false,
-          });
-          this.props.dispatch(
-            addToastWithTimeout(
-              'error',
-              `Oops, we couldn't fetch a preview for ${urlToCheck}. You can publish your story anyways though! 👍`
-            )
-          );
-        });
-    }
-  };
-
-  removeLinkPreview = () => {
-    this.setState({
-      linkPreview: null,
-      linkPreviewTrueUrl: null,
-    });
-  };
-
   render() {
     const {
       title,
@@ -562,9 +525,6 @@ class ComposerWithData extends Component<Props, State> {
       activeCommunity,
       activeChannel,
       isPublishing,
-      linkPreview,
-      linkPreviewTrueUrl,
-      fetchingLinkPreview,
     } = this.state;
 
     const {
@@ -642,13 +602,6 @@ class ComposerWithData extends Component<Props, State> {
             editorKey="thread-composer"
             placeholder={'Write more thoughts here...'}
             className={'threadComposer'}
-            showLinkPreview={true}
-            linkPreview={{
-              loading: fetchingLinkPreview,
-              remove: this.removeLinkPreview,
-              trueUrl: linkPreviewTrueUrl,
-              data: linkPreview,
-            }}
           />
         </ThreadInputs>
 
@@ -660,10 +613,7 @@ class ComposerWithData extends Component<Props, State> {
           )}
 
           <FlexRow>
-            <TextButton
-              hoverColor="warn.alt"
-              onClick={() => this.props.dispatch(changeActiveThread(null))}
-            >
+            <TextButton hoverColor="warn.alt" onClick={this.onCancelClick}>
               Cancel
             </TextButton>
             <Button

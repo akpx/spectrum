@@ -35,22 +35,17 @@ const Text = styled(Copy)`
 `;
 
 const MaintenanceDowntime = () => {
-  const timeInUTC = 'September 25, 2017 15:00:00 UTC';
   return (
     <ViewSegment background="constellations">
       <Wrapper>
         <Emoji>🛠</Emoji>
         <Tagline>Spectrum is currently undergoing maintenance</Tagline>
         <Text>
-          We'll be back by 3pm UTC ({new Date(timeInUTC)
-            .toLocaleTimeString()
-            .replace(/:\d\d:\d\d\s/, '')
-            .toLowerCase()}{' '}
-          your time), check{' '}
+          We'll be back soon, check{' '}
           <a href="https://twitter.com/withspectrum">
             @withspectrum on Twitter
           </a>{' '}
-          for updates.
+          for updates!
         </Text>
       </Wrapper>
     </ViewSegment>

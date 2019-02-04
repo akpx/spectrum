@@ -3,14 +3,15 @@ import compose from 'recompose/compose';
 import { connect } from 'react-redux';
 import { SearchInput, SearchForm, SearchInputDiv } from '../style';
 import Icon from '../../../components/icons';
+import type { Dispatch } from 'redux';
 import {
   closeSearch,
   openSearch,
   setSearchStringVariable,
 } from '../../../actions/dashboardFeed';
-
+import { ESC } from 'src/helpers/keycodes';
 type Props = {
-  dispatch: Function,
+  dispatch: Dispatch<Object>,
   filter: {
     communityId?: ?string,
     channelId?: ?string,
@@ -39,7 +40,7 @@ class ThreadSearch extends React.Component<Props, State> {
 
   handleKeyPress = (e: any) => {
     // escape
-    if (e.keyCode === 27) {
+    if (e.keyCode === ESC) {
       if (!this.props.isOpen) return;
       this.close();
     }
@@ -55,7 +56,7 @@ class ThreadSearch extends React.Component<Props, State> {
 
   open = () => {
     this.props.dispatch(openSearch());
-    this.searchInput.focus();
+    this.searchInput && this.searchInput.focus();
   };
 
   close = () => {
@@ -63,7 +64,7 @@ class ThreadSearch extends React.Component<Props, State> {
       this.props.dispatch(closeSearch());
       this.props.dispatch(setSearchStringVariable(''));
     }
-    this.searchInput.blur();
+    this.searchInput && this.searchInput.blur();
   };
 
   clearClose = () => {
@@ -83,8 +84,8 @@ class ThreadSearch extends React.Component<Props, State> {
     const placeholder = filter.communityId
       ? 'Search this community...'
       : filter.channelId
-        ? 'Search this channel...'
-        : 'Search for conversations...';
+      ? 'Search this channel...'
+      : 'Search for conversations...';
 
     return (
       <SearchForm

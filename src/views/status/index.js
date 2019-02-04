@@ -2,10 +2,17 @@
 import * as React from 'react';
 import { connect } from 'react-redux';
 import { Bar } from './style';
+import { withRouter } from 'react-router';
+import compose from 'recompose/compose';
+import { isViewingMarketingPage } from 'src/helpers/is-viewing-marketing-page';
+import type { Dispatch } from 'redux';
+import { withCurrentUser } from 'src/components/withCurrentUser';
 
 type Props = {
   websocketConnection: string,
-  dispatch: Function,
+  dispatch: Dispatch<Object>,
+  history: Object,
+  currentUser: Object,
 };
 
 type State = {|
@@ -30,6 +37,8 @@ class Status extends React.Component<Props, State> {
   componentDidMount() {
     window.addEventListener('offline', this.handleOnlineChange);
     window.addEventListener('online', this.handleOnlineChange);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
+
     // Only show the bar after a five second timeout
     setTimeout(() => {
       this.setState({
@@ -42,6 +51,16 @@ class Status extends React.Component<Props, State> {
     window.removeEventListener('offline', this.handleOnlineChange);
     window.removeEventListener('online', this.handleOnlineChange);
   }
+
+  handleVisibilityChange = () => {
+    if (document && document.visibilityState === 'hidden') {
+      return this.props.dispatch({ type: 'PAGE_VISIBILITY', value: 'hidden' });
+    } else if (document && document.visibilityState === 'visible') {
+      return this.props.dispatch({ type: 'PAGE_VISIBILITY', value: 'visible' });
+    } else {
+      return;
+    }
+  };
 
   handleOnlineChange = () => {
     const online = window.navigator.onLine;
@@ -56,6 +75,7 @@ class Status extends React.Component<Props, State> {
 
   handleWsChange = () => {
     const { websocketConnection } = this.props;
+
     if (websocketConnection === 'connected') {
       return setTimeout(() => this.setState(this.initialState), 1000);
     }
@@ -65,6 +85,7 @@ class Status extends React.Component<Props, State> {
         color: 'special',
         label: 'Reconnecting to server...',
         wsConnected: false,
+        hidden: false,
       });
     }
 
@@ -72,6 +93,7 @@ class Status extends React.Component<Props, State> {
       this.setState({
         color: 'success',
         label: 'Reconnected!',
+        hidden: false,
       });
 
       return setTimeout(() => this.setState(this.initialState), 1000);
@@ -82,12 +104,28 @@ class Status extends React.Component<Props, State> {
     const curr = this.props;
 
     if (prevProps.websocketConnection !== curr.websocketConnection) {
+      this.setState({
+        hidden: true,
+      });
+
+      if (curr.websocketConnection === 'disconnected') {
+        return setTimeout(() => {
+          return this.handleWsChange();
+        }, 5000);
+      }
+
       return this.handleWsChange();
     }
   }
 
   render() {
+    const { history, currentUser } = this.props;
     const { color, online, wsConnected, label, hidden } = this.state;
+
+    if (isViewingMarketingPage(history, currentUser)) {
+      return null;
+    }
+
     if (hidden) return null;
     // if online and connected to the websocket, we don't need anything
     if (online && wsConnected) return null;
@@ -98,5 +136,10 @@ class Status extends React.Component<Props, State> {
 const map = state => ({
   websocketConnection: state.connectionStatus.websocketConnection,
 });
-// $FlowIssue
-export default connect(map)(Status);
+
+export default compose(
+  // $FlowIssue
+  connect(map),
+  withCurrentUser,
+  withRouter
+)(Status);

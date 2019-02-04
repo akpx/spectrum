@@ -3,7 +3,7 @@
   [![Spectrum](./public/img/media.png)](https://spectrum.chat)
 
   ### Simple, powerful online communities.
-  
+
 </div>
 
 This is the main monorepo codebase of [Spectrum](https://spectrum.chat). Every single line of code that's not packaged into a reusable library is in this repository.
@@ -16,7 +16,7 @@ It is difficult to grow, manage and measure the impact of online communities. Co
 
 Spectrum aims to be the best platform to build any kind of community online by combining the best of web 2.0 forums and real-time chat apps. With best-in-class moderation tooling, a single platform for all your communities, threaded conversations by default, community health monitoring (and much more to come), we think that we will be able to help more people start and grow the best online communities.
 
-> "[Spectrum] will take the place that Reddit used to have a long time ago for communities (especially tech) to freely share ideas and iteract. Except realtime and trolling-free."
+> "[Spectrum] will take the place that Reddit used to have a long time ago for communities (especially tech) to freely share ideas and interact. Except realtime and trolling-free."
 >
 > \- [Guillermo Rauch (@rauchg)](https://twitter.com/rauchg/status/930946768841228288)
 
@@ -39,17 +39,17 @@ Spectrum has been under full-time development since March, 2017. See [the roadma
   - [First time setup](#first-time-setup)
   - [Running the app locally](#running-the-app-locally)
   - [Roadmap](https://github.com/withspectrum/spectrum/projects/19)
-- Technical
-  - [Testing](docs/testing.md)
-  - [Background Jobs](docs/backend/background-jobs.md)
-  - [Deployment](docs/backend/deployment.md)
-  - [GraphQL](docs/backend/api/)
+- [Technical](docs/)
+  - [Testing](docs/testing/intro.md)
+  - [Background Jobs](docs/workers/background-jobs.md)
+  - [Deployment](docs/deployments.md)
+  - [API](docs/backend/api/)
     - [Fragments](docs/backend/api/fragments.md)
     - [Pagination](docs/backend/api/pagination.md)
     - [Testing](docs/backend/api/testing.md)
     - [Tips and Tricks](docs/backend/api/tips-and-tricks.md)
 
-## Contributing 
+## Contributing
 
 **We heartily welcome any and all contributions that match [our product roadmap](https://github.com/withspectrum/spectrum/projects/19) and engineering standards!**
 
@@ -67,7 +67,7 @@ If you found a technical bug on Spectrum or have ideas for features we should im
 
 #### Fixing a bug or implementing a new feature
 
-If you find a bug on Spectrum and open a PR that fixes it we'll review it as soon as possible to ensure it matches our engineering standards. If you want implement a new feature, open an issue first to discuss what it'd look like and to ensure it fits in [our roadmap](https://github.com/withspectrum/spectrum/projects/19) and plans for the app.
+If you find a bug on Spectrum and open a PR that fixes it we'll review it as soon as possible to ensure it matches our engineering standards. If you want to implement a new feature, open an issue first to discuss what it'd look like and to ensure it fits in [our roadmap](https://github.com/withspectrum/spectrum/projects/19) and plans for the app.
 
 If you want to contribute but are unsure to start, we have [a "good first issue" label](https://github.com/withspectrum/spectrum/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) which is applied to newcomer-friendly issues. Take a look at [the full list of good first issues](https://github.com/withspectrum/spectrum/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and pick something you like! There is also [an "open" channel in the Spectrum community on Spectrum](https://spectrum.chat/spectrum/open) (how meta), if you run into troubles while trying to contribute that is the best place to talk to us.
 
@@ -83,7 +83,7 @@ Want to fix a bug or implement an agreed-upon feature? Great, jump to the [local
 
 With the ground rules out of the way, let's talk about the coarse architecture of this mono repo:
 
-- **Full-stack JavaScript**: We use Node.js to power our servers, and React to power our frontend and mobile apps. Almost all of the code you'll touch in this codebase will be JavaScript.
+- **Full-stack JavaScript**: We use Node.js to power our servers, and React to power our frontend apps. Almost all of the code you'll touch in this codebase will be JavaScript.
 - **Background Jobs**: We leverage background jobs (powered by [`bull`](https://github.com/OptimalBits/bull) and Redis) a lot. These jobs are handled by a handful of small worker servers, each with its own purpose.
 
 Here is a list of all the big technologies we use:
@@ -93,8 +93,7 @@ Here is a list of all the big technologies we use:
 - **GraphQL**: API, powered by the entire Apollo toolchain
 - **Flowtype**: Type-safe JavaScript
 - **PassportJS**: Authentication
-- **React**: Frontend and mobile apps
-- **Expo**: Mobile apps
+- **React**: Frontend React app
 - **DraftJS**: WYSIWYG writing experience on the web
 
 #### Folder structure
@@ -104,13 +103,12 @@ spectrum/
 ├── api        # API server
 ├── athena     # Worker server (notifications and general processing)
 ├── chronos    # Worker server (cron jobs)
+├── desktop    # desktop apps (build with electron)
 ├── docs
 ├── email-templates
 ├── hermes     # Worker server (email sending)
 ├── hyperion   # Server rendering server
 ├── mercury    # Worker server (reputation)
-├── mobile     # Mobile apps
-├── pluto      # Worker server (payments; syncing with Stripe)
 ├── public     # Public files used on the frontend
 ├── shared     # Shared JavaScript code
 ├── src        # Frontend SPA
@@ -152,6 +150,11 @@ The first step to running Spectrum locally is downloading the code by cloning th
 ```sh
 git clone git@github.com:withspectrum/spectrum.git
 ```
+ If you get `Permission denied` error using `ssh` refer [here](https://help.github.com/articles/error-permission-denied-publickey/)
+or use `https` link as a fallback.
+```sh
+git clone https://github.com/withspectrum/spectrum.git
+```
 
 #### Installation
 
@@ -184,6 +187,19 @@ yarn run db:migrate
 yarn run db:seed
 # ⚠️ To empty the database (e.g. if there's faulty data) run yarn run db:drop
 ```
+
+There's a shortcut for dropping, migrating and seeding the database too:
+```sh
+yarn run db:reset
+```
+
+The `testing` database used in end to end tests is managed separately. It is built, migrated, and seeded when you run:
+
+```sh
+yarn run start:api:test
+```
+
+To drop the `testing` database, go to http://localhost:8080/#tables while `rethinkdb` is running, and click Delete Database on the appropriate database.
 
 #### Getting the secrets
 
@@ -225,38 +241,26 @@ yarn run dev:api
 
 #### Develop the web UI
 
-To develop the frontend and web UI run 
+To develop the frontend and web UI run
 
 ```
 yarn run dev:web
 ```
 
-#### Develop the mobile apps
+#### Develop the desktop app
 
-To start the mobile apps run:
+To develop the desktop app you have to have the dev web server running in the background (`yarn run dev:web`) and then, in another terminal tab, run:
 
 ```
-yarn run dev:mobile
+yarn run dev:desktop
 ```
 
-And then open either the iOS simulator or the Android simulator with 
+> Note: If something didn't work or you ran into troubles please submit PRs to improve this doc and keep it up to date!	
 
-```sh
-yarn run open:ios 
-# or
-yarn run open:android 
-```
+<br />	
+<div align="center">	
+  <img height="200px" src="public/img/connect.svg" />	
+</div>	
 
-Refer to [the Expo documentation on how to install the simulators](https://docs.expo.io/versions/v25.0.0/guides/debugging.html#using-a-simulator--emulator).
-
-> Note: If something didn't work or you ran into troubles please submit PRs to improve this doc and keep it up to date!
-
-<br />
-<div align="center">
-  <img height="200px" src="public/img/connect.svg" />
-</div>
-
-## License 
-
+## License	
 BSD 3-Clause, see the [LICENSE](./LICENSE) file.
-

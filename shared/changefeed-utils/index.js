@@ -2,7 +2,7 @@
 const debug = require('debug')('shared:changefeed-utils');
 import processChangefeed from 'rethinkdb-changefeed-reconnect';
 import Raven from 'shared/raven';
-import type { Cursor } from 'rethinkdbdash';
+import type { Cursor } from 'rethinkhaberdashery';
 
 export const newDocuments = (db: any) =>
   db
@@ -42,8 +42,12 @@ export const hasDeletedField = (db: any, field: string) =>
   db
     .row('old_val')
     .hasFields(field)
-    .and(db.row('new_val').hasFields(field))
-    .not();
+    .and(
+      db
+        .row('new_val')
+        .hasFields(field)
+        .not()
+    );
 
 export const createChangefeed = (
   getChangefeed: () => Promise<Cursor>,
@@ -59,7 +63,7 @@ export const createChangefeed = (
     },
     {
       changefeedName: name,
-      attemptDelay: 60000,
+      attemptDelay: 10000,
       maxAttempts: Infinity,
       logger: {
         // Ignore log and info logs in production

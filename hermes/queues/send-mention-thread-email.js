@@ -9,20 +9,11 @@ import {
   TYPE_MUTE_THREAD,
   SEND_NEW_MENTION_THREAD_EMAIL,
 } from './constants';
-import type { DBThread, DBUser } from 'shared/types';
+import type { SendNewMessageMentionEmailJobData, Job } from 'shared/bull/types';
 
-type SendNewMentionEmailJobData = {
-  recipient: DBUser,
-  sender: DBUser,
-  thread: DBThread,
-};
-
-type SendNewMentionEmailJob = {
-  data: SendNewMentionEmailJobData,
-  id: string,
-};
-
-export default async (job: SendNewMentionEmailJob) => {
+export default async (
+  job: Job<SendNewMessageMentionEmailJobData>
+): Promise<void> => {
   debug(`\nnew job: ${job.id}`);
 
   const { recipient, sender, thread } = job.data;
@@ -34,14 +25,13 @@ export default async (job: SendNewMentionEmailJob) => {
     generateUnsubscribeToken(recipient.id, TYPE_MUTE_THREAD, thread.id),
   ]);
 
-  if (!recipient.email || !unsubscribeToken) return;
+  if (!recipient.email || !unsubscribeToken) return Promise.resolve();
 
   try {
     return sendEmail({
-      TemplateId: NEW_MENTION_THREAD_TEMPLATE,
-      To: recipient.email,
-      Tag: SEND_NEW_MENTION_THREAD_EMAIL,
-      TemplateModel: {
+      templateId: NEW_MENTION_THREAD_TEMPLATE,
+      to: [{ email: recipient.email }],
+      dynamic_template_data: {
         subject,
         preheader,
         sender,
@@ -52,11 +42,11 @@ export default async (job: SendNewMentionEmailJob) => {
         unsubscribeToken,
         muteThreadToken,
       },
+      userId: recipient.id,
     });
   } catch (err) {
-    debug('❌ Error in job:\n');
-    debug(err);
-    Raven.captureException(err);
-    console.log(err);
+    console.error('❌ Error in job:\n');
+    console.error(err);
+    return Raven.captureException(err);
   }
 };

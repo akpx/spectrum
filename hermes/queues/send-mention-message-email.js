@@ -1,5 +1,6 @@
 // @flow
-const debug = require('debug')('hermes:queue:send-new-direct-message-email');
+const debug = require('debug')('hermes:queue:send-mention-message-email');
+import Raven from 'shared/raven';
 import sendEmail from '../send-email';
 import { generateUnsubscribeToken } from '../utils/generate-jwt';
 import {
@@ -8,21 +9,11 @@ import {
   TYPE_MUTE_THREAD,
   SEND_NEW_MENTION_MESSAGE_EMAIL,
 } from './constants';
-import type { DBThread, DBUser, DBMessage } from 'shared/types';
+import type { SendNewMessageMentionEmailJobData, Job } from 'shared/bull/types';
 
-type SendNewMentionEmailJobData = {
-  recipient: DBUser,
-  sender: DBUser,
-  thread: DBThread,
-  message: DBMessage,
-};
-
-type SendNewMentionEmailJob = {
-  data: SendNewMentionEmailJobData,
-  id: string,
-};
-
-export default async (job: SendNewMentionEmailJob) => {
+export default async (
+  job: Job<SendNewMessageMentionEmailJobData>
+): Promise<void> => {
   debug(`\nnew job: ${job.id}`);
 
   const { recipient, sender, thread, message } = job.data;
@@ -40,14 +31,13 @@ export default async (job: SendNewMentionEmailJob) => {
     thread.id
   );
 
-  if (!recipient.email || !unsubscribeToken) return;
+  if (!recipient.email || !unsubscribeToken) return Promise.resolve();
 
   try {
     return sendEmail({
-      TemplateId: NEW_MENTION_MESSAGE_TEMPLATE,
-      To: recipient.email,
-      Tag: SEND_NEW_MENTION_MESSAGE_EMAIL,
-      TemplateModel: {
+      templateId: NEW_MENTION_MESSAGE_TEMPLATE,
+      to: [{ email: recipient.email }],
+      dynamic_template_data: {
         subject,
         preheader,
         sender,
@@ -59,8 +49,11 @@ export default async (job: SendNewMentionEmailJob) => {
         unsubscribeToken,
         muteThreadToken,
       },
+      userId: recipient.id,
     });
   } catch (err) {
-    console.log(err);
+    console.error('❌ Error in job:\n');
+    console.error(err);
+    return Raven.captureException(err);
   }
 };

@@ -9,16 +9,25 @@ import generateMetaInfo from 'shared/generate-meta-info';
 import Messages from '../components/messages';
 import Header from '../components/header';
 import ChatInput from '../../../components/chatInput';
-import { MessagesContainer, ViewContent } from '../style';
+import { NullState } from '../../../components/upsell';
+import { MessagesContainer, ViewContent, NoThreads } from '../style';
 import { getDirectMessageThreadQuery } from 'shared/graphql/queries/directMessageThread/getDirectMessageThread';
 import type { GetDirectMessageThreadType } from 'shared/graphql/queries/directMessageThread/getDirectMessageThread';
 import { throttle } from '../../../helpers/utils';
-import { track } from '../../../helpers/events';
 import { searchUsersQuery } from 'shared/graphql/queries/search/searchUsers';
 import { Spinner } from '../../../components/globals';
 import { addToastWithTimeout } from '../../../actions/toasts';
 import { clearDirectMessagesComposer } from '../../../actions/directMessageThreads';
 import createDirectMessageThreadMutation from 'shared/graphql/mutations/directMessageThread/createDirectMessageThread';
+import type { Dispatch } from 'redux';
+import { withCurrentUser } from 'src/components/withCurrentUser';
+import {
+  BACKSPACE,
+  ESC,
+  ARROW_DOWN,
+  ARROW_UP,
+  ENTER,
+} from 'src/helpers/keycodes';
 import {
   ComposerInputWrapper,
   Grow,
@@ -55,11 +64,10 @@ type Props = {
   initNewThreadWithUser: Array<?any>,
   threads: Array<Object>,
   hideOnMobile: boolean,
-  dispatch: Function,
+  dispatch: Dispatch<Object>,
   createDirectMessageThread: Function,
   threadSliderIsOpen: boolean,
   history: Object,
-  setActiveThread: Function,
 };
 
 class NewThread extends React.Component<Props, State> {
@@ -141,7 +149,6 @@ class NewThread extends React.Component<Props, State> {
       searchIsLoading: true,
     });
 
-    // trigger the query
     client
       .query({
         query: searchUsersQuery,
@@ -201,6 +208,7 @@ class NewThread extends React.Component<Props, State> {
   handleKeyPress = (e: any) => {
     // if the thread slider is open, we shouldn't be doing anything in DMs
     if (this.props.threadSliderIsOpen) return;
+    if (this.state.chatInputIsFocused) return;
 
     // destructure the whole state object
     const {
@@ -237,7 +245,7 @@ class NewThread extends React.Component<Props, State> {
          selected to be messaged, we can just return and clear out unneeded
          state
     */
-    if (e.keyCode === 8) {
+    if (e.keyCode === BACKSPACE) {
       // 0. if the chat input is focused, don't do anything
       if (chatInputIsFocused) return;
 
@@ -297,7 +305,7 @@ class NewThread extends React.Component<Props, State> {
       1. If there are focused selected users, clear them
       2. If there are search results, clear them to hide the dropdown
     */
-    if (e.keyCode === 27) {
+    if (e.keyCode === ESC) {
       // 0. if the chat input is focused, don't do anything
       if (chatInputIsFocused) return;
 
@@ -318,7 +326,7 @@ class NewThread extends React.Component<Props, State> {
       do anything
       2. Focus the next user in the search results
     */
-    if (e.keyCode === 40) {
+    if (e.keyCode === ARROW_DOWN) {
       // 0. if the chat input is focused, don't do anything
       if (chatInputIsFocused) return;
 
@@ -340,7 +348,7 @@ class NewThread extends React.Component<Props, State> {
       do anything
       2. Focus the previous user in the search results
     */
-    if (e.keyCode === 38) {
+    if (e.keyCode === ARROW_UP) {
       // 0. if the chat input is focused, don't do anything
       if (chatInputIsFocused) return;
 
@@ -364,7 +372,7 @@ class NewThread extends React.Component<Props, State> {
       existing thread containing the selected users
       2. Otherwise do nothing
     */
-    if (e.keyCode === 13) {
+    if (e.keyCode === ENTER) {
       // 0. if the chat input is focused, don't do anything
       if (chatInputIsFocused) return;
       if (!searchResults || searchResults.length === 0) return;
@@ -405,7 +413,11 @@ class NewThread extends React.Component<Props, State> {
   };
 
   handleChange = (e: any) => {
-    const { existingThreadBasedOnSelectedUsers } = this.state;
+    const {
+      existingThreadBasedOnSelectedUsers,
+      chatInputIsFocused,
+    } = this.state;
+    if (chatInputIsFocused) return;
 
     // unfocus any selected user pills
     this.setState({
@@ -560,18 +572,6 @@ class NewThread extends React.Component<Props, State> {
     }
   };
 
-  componentWillMount() {
-    // can take an optional param of an array of user objects to automatically
-    // populate the new message composer
-    const { initNewThreadWithUser } = this.props;
-
-    // if the prop is present, add the users to the selected users state
-    if (initNewThreadWithUser.length > 0) {
-      this.setState({
-        selectedUsersForNewThread: [...initNewThreadWithUser],
-      });
-    }
-  }
   /*
     Add event listeners when the component mounts - will be listening
     for up, down, backspace, escape, and enter, to trigger different
@@ -580,7 +580,28 @@ class NewThread extends React.Component<Props, State> {
   componentDidMount() {
     document.addEventListener('keydown', this.handleKeyPress, false);
 
+    // can take an optional param of an array of user objects to automatically
+    // populate the new message composer
     const { initNewThreadWithUser, threadSliderIsOpen } = this.props;
+
+    // if the prop is present, add the users to the selected users state
+    if (initNewThreadWithUser.length > 0) {
+      this.setState(
+        {
+          selectedUsersForNewThread: [...initNewThreadWithUser],
+        },
+        () => {
+          // clear the redux store of this inited user, in case the person
+          // sends more messages later in the session
+          this.props.dispatch(clearDirectMessagesComposer());
+
+          if (this.state.selectedUsersForNewThread.length > 0) {
+            // trigger a new search for an existing thread with these users
+            this.getMessagesForExistingDirectMessageThread();
+          }
+        }
+      );
+    }
 
     // if someone is viewing a thread, don't focus here
     if (threadSliderIsOpen) return;
@@ -592,16 +613,7 @@ class NewThread extends React.Component<Props, State> {
       return input && input.focus();
     }
 
-    this.chatInput.triggerFocus();
-
-    // clear the redux store of this inited user, in case the person
-    // sends more messages later in the session
-    this.props.dispatch(clearDirectMessagesComposer());
-
-    if (this.state.selectedUsersForNewThread.length > 0) {
-      // trigger a new search for an existing thread with these users
-      this.getMessagesForExistingDirectMessageThread();
-    }
+    this.chatInput.focus();
   }
 
   componentWillUnmount() {
@@ -624,12 +636,13 @@ class NewThread extends React.Component<Props, State> {
     // if no users have been selected, break out of this function and throw
     // an error
     if (selectedUsersForNewThread.length === 0) {
-      return this.props.dispatch(
+      this.props.dispatch(
         addToastWithTimeout(
           'error',
           'Choose some people to send this message to first!'
         )
       );
+      return Promise.reject();
     }
 
     const input = {
@@ -644,16 +657,14 @@ class NewThread extends React.Component<Props, State> {
       },
     };
 
-    const isPrivate = selectedUsersForNewThread.length > 1 ? true : false;
-
     if (threadIsBeingCreated) {
-      return;
+      return Promise.resolve();
     } else {
       this.setState({
         threadIsBeingCreated: true,
       });
 
-      this.props
+      return this.props
         .createDirectMessageThread(input)
         .then(({ data: { createDirectMessageThread } }) => {
           if (!createDirectMessageThread) {
@@ -665,17 +676,11 @@ class NewThread extends React.Component<Props, State> {
             );
             return;
           }
-          track(
-            'direct message thread',
-            `${isPrivate ? 'private thread' : 'group thread'} created`,
-            null
-          );
 
           this.setState({
             threadIsBeingCreated: false,
           });
 
-          this.props.setActiveThread(createDirectMessageThread.id);
           this.props.history.push(`/messages/${createDirectMessageThread.id}`);
           return;
         })
@@ -715,7 +720,7 @@ class NewThread extends React.Component<Props, State> {
       loadingExistingThreadMessages,
       existingThreadWithMessages,
     } = this.state;
-    const { currentUser, hideOnMobile } = this.props;
+    const { currentUser, hideOnMobile, threads } = this.props;
 
     const { title, description } = generateMetaInfo({
       type: 'directMessage',
@@ -724,6 +729,8 @@ class NewThread extends React.Component<Props, State> {
         description: null,
       },
     });
+
+    const haveThreads = threads && threads.length > 0;
 
     return (
       <MessagesContainer hideOnMobile={hideOnMobile}>
@@ -738,6 +745,7 @@ class NewThread extends React.Component<Props, State> {
                     selected={focusedSelectedUser === user.id}
                     onClick={() => this.setFocusedSelectedUser(user.id)}
                     key={user.id}
+                    data-cy="selected-user-pill"
                   >
                     {user.name}
                   </Pill>
@@ -779,8 +787,6 @@ class NewThread extends React.Component<Props, State> {
                         user={user}
                         isOnline={user.isOnline}
                         size={32}
-                        radius={32}
-                        src={user.profilePhoto}
                       />
                       <SearchResultTextContainer>
                         <SearchResultDisplayName>
@@ -813,13 +819,12 @@ class NewThread extends React.Component<Props, State> {
           moved={selectedUsersForNewThread.length > 0}
           innerRef={scrollBody => (this.scrollBody = scrollBody)}
         >
-          {existingThreadWithMessages &&
-            existingThreadWithMessages.id && (
-              <Header
-                thread={existingThreadWithMessages}
-                currentUser={currentUser}
-              />
-            )}
+          {existingThreadWithMessages && existingThreadWithMessages.id && (
+            <Header
+              thread={existingThreadWithMessages}
+              currentUser={currentUser}
+            />
+          )}
 
           {existingThreadBasedOnSelectedUsers && (
             <Messages
@@ -831,6 +836,20 @@ class NewThread extends React.Component<Props, State> {
 
           {!existingThreadBasedOnSelectedUsers && (
             <Grow>
+              {haveThreads && (
+                <NoThreads>
+                  <NullState icon="message" heading={`Send direct messages`} />
+                </NoThreads>
+              )}
+              {!haveThreads && (
+                <NoThreads>
+                  <NullState
+                    icon="message"
+                    heading={`Send direct messages`}
+                    copy={`Direct messages are private conversations between you and anyone else, including groups. Search for a person above to start a new conversation.`}
+                  />
+                </NoThreads>
+              )}
               {loadingExistingThreadMessages && (
                 <Spinner size={16} color={'brand.default'} />
               )}
@@ -861,6 +880,7 @@ export default compose(
   withApollo,
   withRouter,
   createDirectMessageThreadMutation,
+  withCurrentUser,
   // $FlowIssue
   connect(mapStateToProps)
 )(NewThread);

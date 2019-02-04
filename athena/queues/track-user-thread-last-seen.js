@@ -7,6 +7,7 @@ import {
   createUserThread,
 } from '../models/usersThreads';
 import type { Job, UserThreadLastSeenJobData } from 'shared/bull/types';
+import type { DBUsersThreads } from 'shared/types';
 
 export default async (job: Job<UserThreadLastSeenJobData>) => {
   const { userId, threadId, timestamp } = job.data;
@@ -19,16 +20,34 @@ export default async (job: Job<UserThreadLastSeenJobData>) => {
     );
     return;
   }
-  const date = new Date(parseInt(timestamp, 10));
+  // Timestamp will be serialized to Redis, so it's either a string date "Thu 20 Nov 2017" or a
+  // string timestamp. "1835463856" We gotta make sure to handle both those cases, so we try and
+  // parse to int first, and if that fails (i.e. returns NaN) we assume it's a string date.
+  let parsedTimestamp =
+    typeof timestamp === 'string' ? parseInt(timestamp, 10) : timestamp;
+  if (isNaN(parsedTimestamp)) parsedTimestamp = timestamp;
+  const date = new Date(parsedTimestamp);
   debug(
     `new job\nthreadId: ${threadId}\nuserId: ${userId}\ntimestamp: ${new Date(
       timestamp
     ).toString()}`
   );
 
-  const record = await getUsersThread(userId, threadId);
+  const record: ?DBUsersThreads = await getUsersThread(userId, threadId);
 
   if (record) {
+    if (
+      record.lastSeen &&
+      new Date(record.lastSeen).getTime() > new Date(date).getTime()
+    ) {
+      debug(
+        `old lastSeen ${record.lastSeen.toString()} is later than new lastSeen ${date.toString()}, not running job:\nuserId: ${userId}\nthreadId: ${threadId}\ntimestamp: ${new Date(
+          timestamp
+        ).toString()}`
+      );
+      return;
+    }
+
     debug(
       `existing usersThread, updating usersThreads#${record.id} with lastSeen`
     );
@@ -45,11 +64,8 @@ export default async (job: Job<UserThreadLastSeenJobData>) => {
       debug(`lastSeen successfully stored`);
     })
     .catch(err => {
-      debug(
-        '❌ Error in job for\nuserId: ${userId}\nthreadId: ${threadId}\ntimestamp: ${timestamp}'
-      );
-      debug(err);
+      console.error('❌ Error in job');
+      console.error(err);
       Raven.captureException(err);
-      console.log(err);
     });
 };

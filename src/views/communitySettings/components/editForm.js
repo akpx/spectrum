@@ -3,13 +3,14 @@ import * as React from 'react';
 import compose from 'recompose/compose';
 import { connect } from 'react-redux';
 import { withRouter } from 'react-router';
-import { track } from '../../../helpers/events';
 import editCommunityMutation from 'shared/graphql/mutations/community/editCommunity';
 import type { EditCommunityType } from 'shared/graphql/mutations/community/editCommunity';
+import type { GetCommunityType } from 'shared/graphql/queries/community/getCommunity';
 import { openModal } from '../../../actions/modals';
 import { addToastWithTimeout } from '../../../actions/toasts';
 import { Button, IconButton } from '../../../components/buttons';
 import { Notice } from '../../../components/listItems/style';
+import Icon from 'src/components/icons';
 import {
   Input,
   UnderlineInput,
@@ -25,11 +26,15 @@ import {
   Actions,
   TertiaryActionContainer,
   ImageInputWrapper,
+  DeleteCoverWrapper,
+  DeleteCoverButton,
 } from '../../../components/editForm/style';
 import {
   SectionCard,
   SectionTitle,
 } from '../../../components/settingsViews/style';
+import { track, events, transformations } from 'src/helpers/analytics';
+import type { Dispatch } from 'redux';
 
 type State = {
   name: string,
@@ -48,19 +53,8 @@ type State = {
 };
 
 type Props = {
-  community: {
-    name: string,
-    slug: string,
-    description: string,
-    id: string,
-    profilePhoto: string,
-    coverPhoto: string,
-    website: ?string,
-    communityPermissions: {
-      isOwner: boolean,
-    },
-  },
-  dispatch: Function,
+  community: GetCommunityType,
+  dispatch: Dispatch<Object>,
   editCommunity: Function,
 };
 
@@ -72,7 +66,7 @@ class EditForm extends React.Component<Props, State> {
     this.state = {
       name: community.name,
       slug: community.slug,
-      description: community.description,
+      description: community.description ? community.description : '',
       communityId: community.id,
       website: community.website ? community.website : '',
       image: community.profilePhoto,
@@ -129,6 +123,8 @@ class EditForm extends React.Component<Props, State> {
     let reader = new FileReader();
     let file = e.target.files[0];
 
+    if (!file) return;
+
     this.setState({
       isLoading: true,
     });
@@ -141,8 +137,6 @@ class EditForm extends React.Component<Props, State> {
     }
 
     reader.onloadend = () => {
-      track('community', 'profile photo uploaded', null);
-
       this.setState({
         file: file,
         // $FlowFixMe
@@ -161,6 +155,8 @@ class EditForm extends React.Component<Props, State> {
     let reader = new FileReader();
     let file = e.target.files[0];
 
+    if (!file) return;
+
     this.setState({
       isLoading: true,
     });
@@ -173,8 +169,6 @@ class EditForm extends React.Component<Props, State> {
     }
 
     reader.onloadend = () => {
-      track('community', 'cover photo uploaded', null);
-
       this.setState({
         coverFile: file,
         // $FlowFixMe
@@ -184,7 +178,9 @@ class EditForm extends React.Component<Props, State> {
       });
     };
 
-    reader.readAsDataURL(file);
+    if (file) {
+      reader.readAsDataURL(file);
+    }
   };
 
   save = e => {
@@ -195,6 +191,7 @@ class EditForm extends React.Component<Props, State> {
       website,
       file,
       coverFile,
+      coverPhoto,
       communityId,
       photoSizeError,
     } = this.state;
@@ -204,6 +201,7 @@ class EditForm extends React.Component<Props, State> {
       website,
       file,
       coverFile,
+      coverPhoto,
       communityId,
     };
 
@@ -226,12 +224,9 @@ class EditForm extends React.Component<Props, State> {
 
         // community was returned
         if (community !== undefined) {
-          track('community', 'edited', null);
-
           this.props.dispatch(
             addToastWithTimeout('success', 'Community saved!')
           );
-          window.location.href = `/${this.props.community.slug}`;
         }
         return;
       })
@@ -240,13 +235,13 @@ class EditForm extends React.Component<Props, State> {
           isLoading: false,
         });
 
-        this.props.dispatch(addToastWithTimeout('error', err));
+        this.props.dispatch(addToastWithTimeout('error', err.message));
       });
   };
 
   triggerDeleteCommunity = (e, communityId) => {
     e.preventDefault();
-    track('community', 'delete inited', null);
+    const { community } = this.props;
     const { name, communityData } = this.state;
     const message = (
       <div>
@@ -267,6 +262,10 @@ class EditForm extends React.Component<Props, State> {
       </div>
     );
 
+    track(events.COMMUNITY_DELETED_INITED, {
+      community: transformations.analyticsCommunity(community),
+    });
+
     return this.props.dispatch(
       openModal('DELETE_DOUBLE_CHECK_MODAL', {
         id: communityId,
@@ -274,6 +273,11 @@ class EditForm extends React.Component<Props, State> {
         message,
       })
     );
+  };
+
+  deleteCoverPhoto = e => {
+    e.preventDefault();
+    this.setState({ coverPhoto: '', coverFile: null });
   };
 
   render() {
@@ -307,6 +311,13 @@ class EditForm extends React.Component<Props, State> {
         <SectionTitle>Community Settings</SectionTitle>
         <Form onSubmit={this.save}>
           <ImageInputWrapper>
+            {coverPhoto && !/default_images/.test(coverPhoto) && (
+              <DeleteCoverWrapper>
+                <DeleteCoverButton onClick={e => this.deleteCoverPhoto(e)}>
+                  <Icon glyph="view-close-small" size={'16'} />
+                </DeleteCoverButton>
+              </DeleteCoverWrapper>
+            )}
             <CoverInput
               onChange={this.setCommunityCover}
               defaultValue={coverPhoto}
@@ -315,11 +326,9 @@ class EditForm extends React.Component<Props, State> {
             />
 
             <PhotoInput
+              type={'community'}
               onChange={this.setCommunityPhoto}
               defaultValue={image}
-              community
-              user={null}
-              allowGif
             />
           </ImageInputWrapper>
 
@@ -388,4 +397,8 @@ class EditForm extends React.Component<Props, State> {
   }
 }
 
-export default compose(connect(), editCommunityMutation, withRouter)(EditForm);
+export default compose(
+  connect(),
+  editCommunityMutation,
+  withRouter
+)(EditForm);

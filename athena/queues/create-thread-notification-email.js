@@ -3,13 +3,13 @@ const debug = require('debug')('athena:queue:create-thread-email');
 import Raven from '../../shared/raven';
 import truncate from 'shared/truncate';
 import getEmailStatus from '../utils/get-email-status';
-import { getUserById } from '../models/user';
+import { getUserById } from 'shared/db/queries/user';
 import { getCommunityById } from '../models/community';
 import { getChannelById } from '../models/channel';
-import { SEND_THREAD_CREATED_NOTIFICATION_EMAIL } from './constants';
 import { toPlainText, toState } from 'shared/draft-utils';
-import addQueue from '../utils/addQueue';
+import { sendThreadCreatedNotificationEmailQueue } from 'shared/bull/queues';
 import type { DBThread, DBUser } from 'shared/types';
+import { signCommunity, signUser, signThread } from 'shared/imgix';
 
 const createThreadNotificationEmail = async (
   thread: DBThread,
@@ -34,26 +34,33 @@ const createThreadNotificationEmail = async (
     // user is either online or has this notif type turned off
     if (!shouldSendEmail) return;
 
+    const signedThread = signThread(thread);
+
     // at this point the email is safe to send, construct data for Hermes
     const rawBody =
       thread.type === 'DRAFTJS'
-        ? thread.content.body
-          ? toPlainText(toState(JSON.parse(thread.content.body)))
+        ? signedThread.content.body
+          ? toPlainText(toState(JSON.parse(signedThread.content.body)))
           : ''
-        : thread.content.body || '';
+        : signedThread.content.body || '';
 
     // if the body is long, truncate it at 280 characters for the email preview
     const body = rawBody && truncate(rawBody.trim(), 280);
 
     const primaryActionLabel = 'View conversation';
 
-    return addQueue(SEND_THREAD_CREATED_NOTIFICATION_EMAIL, {
+    const signedCommunity = signCommunity(community);
+    const signedCreator = signUser(creator);
+
+    return sendThreadCreatedNotificationEmailQueue.add({
+      // $FlowIssue
       recipient,
       primaryActionLabel,
       thread: {
         ...thread,
-        creator,
-        community,
+        // $FlowIssue
+        creator: signedCreator,
+        community: signedCommunity,
         channel,
         content: {
           title: thread.content.title,
@@ -65,10 +72,9 @@ const createThreadNotificationEmail = async (
 
   // send all the emails
   return Promise.all([emailPromises]).catch(err => {
-    debug('❌ Error in job:\n');
-    debug(err);
+    console.error('❌ Error in job:\n');
+    console.error(err);
     Raven.captureException(err);
-    console.log(err);
   });
 };
 

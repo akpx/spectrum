@@ -5,7 +5,7 @@ import {
   closeThreadSlider,
 } from '../../actions/threadSlider';
 import queryString from 'query-string';
-import Link from 'src/components/link';
+import { Link } from 'react-router-dom';
 import Transition from 'react-transition-group/Transition';
 import {
   Container,
@@ -16,7 +16,9 @@ import {
   CloseLabel,
 } from './style';
 import Icon from '../../components/icons';
-import ThreadContainer from '../thread';
+import { SliderThreadView } from '../thread';
+import { ErrorBoundary } from 'src/components/error';
+import { ESC } from 'src/helpers/keycodes';
 
 const ANIMATION_DURATION = 50;
 
@@ -44,8 +46,7 @@ class ThreadSlider extends Component {
     const parsed = queryString.parse(this.props.location.search);
     const threadId = parsed.thread;
     if (!threadId) return;
-    // if user presses esc
-    if (e.keyCode === 27) {
+    if (e.keyCode === ESC) {
       this.closeSlider();
       return this.props.history.push(this.props.location.pathname);
     }
@@ -60,49 +61,51 @@ class ThreadSlider extends Component {
     const threadId = parsed.thread;
 
     return (
-      <div>
-        <Transition in={!!threadId} timeout={ANIMATION_DURATION}>
-          {state => (
-            <div>
-              {threadId && (
-                <Container>
-                  <Link
-                    to={this.props.location.pathname}
-                    onClick={this.closeSlider}
-                  >
-                    <Overlay
-                      entering={state === 'entering'}
-                      entered={state === 'entered'}
-                      duration={ANIMATION_DURATION}
-                    />
-                  </Link>
-                  <Thread
-                    entering={state === 'entering'}
-                    entered={state === 'entered'}
-                    duration={ANIMATION_DURATION}
-                  >
-                    <Close
+      <ErrorBoundary>
+        <div>
+          <Transition in={!!threadId} timeout={ANIMATION_DURATION}>
+            {state => (
+              <div>
+                {threadId && (
+                  <Container>
+                    <Link
                       to={this.props.location.pathname}
                       onClick={this.closeSlider}
                     >
-                      <CloseLabel>Close</CloseLabel>
-                      <CloseButton>
-                        <Icon glyph="view-forward" size={24} />
-                      </CloseButton>
-                    </Close>
+                      <Overlay
+                        entering={state === 'entering'}
+                        entered={state === 'entered'}
+                        duration={ANIMATION_DURATION}
+                      />
+                    </Link>
+                    <Thread
+                      entering={state === 'entering'}
+                      entered={state === 'entered'}
+                      duration={ANIMATION_DURATION}
+                    >
+                      <Close
+                        to={this.props.location.pathname}
+                        onClick={this.closeSlider}
+                      >
+                        <CloseLabel>Close</CloseLabel>
+                        <CloseButton>
+                          <Icon glyph="view-forward" size={24} />
+                        </CloseButton>
+                      </Close>
 
-                    <ThreadContainer
-                      threadId={threadId}
-                      threadViewContext={'slider'}
-                      slider
-                    />
-                  </Thread>
-                </Container>
-              )}
-            </div>
-          )}
-        </Transition>
-      </div>
+                      <SliderThreadView
+                        threadId={threadId}
+                        threadViewContext={'slider'}
+                        slider
+                      />
+                    </Thread>
+                  </Container>
+                )}
+              </div>
+            )}
+          </Transition>
+        </div>
+      </ErrorBoundary>
     );
   }
 }

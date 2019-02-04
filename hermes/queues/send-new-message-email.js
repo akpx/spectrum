@@ -1,56 +1,18 @@
 // @flow
 const debug = require('debug')('hermes:queue:send-new-message-email');
+import Raven from 'shared/raven';
 import sendEmail from '../send-email';
 import { generateUnsubscribeToken } from '../utils/generate-jwt';
+import smarten from 'hermes/utils/smarten-string';
 import {
   NEW_MESSAGE_TEMPLATE,
   TYPE_NEW_MESSAGE_IN_THREAD,
   TYPE_MUTE_THREAD,
   SEND_NEW_MESSAGE_EMAIL,
 } from './constants';
+import type { Job, SendNewMessageEmailJobData } from 'shared/bull/types';
 
-type ReplyData = {
-  sender: {
-    name: string,
-    username: string,
-    profilePhoto: string,
-  },
-  content: {
-    body: string,
-  },
-};
-
-type ThreadData = {
-  id: string,
-  content: {
-    title: string,
-  },
-  community: {
-    slug: string,
-    name: string,
-  },
-  channel: {
-    name: string,
-  },
-  replies: Array<ReplyData>,
-  repliesCount: number,
-};
-
-type SendNewMessageEmailJobData = {
-  recipient: {
-    userId: string,
-    email: string,
-    username: string,
-  },
-  threads: Array<ThreadData>,
-};
-
-type SendNewMessageEmailJob = {
-  data: SendNewMessageEmailJobData,
-  id: string,
-};
-
-export default async (job: SendNewMessageEmailJob) => {
+export default async (job: Job<SendNewMessageEmailJobData>): Promise<void> => {
   debug(`\nnew job: ${job.id}`);
   const { recipient, threads } = job.data;
 
@@ -69,13 +31,16 @@ export default async (job: SendNewMessageEmailJob) => {
   const firstName = totalNames.splice(0, 1)[0];
   const restNames = totalNames.length > 0 ? totalNames : null;
   const numUsersText = restNames
-    ? ` and ${restNames.length === 1
-        ? `${restNames.length} other person`
-        : `${restNames.length} others`}`
+    ? ` and ${
+        restNames.length === 1
+          ? `${restNames.length} other person`
+          : `${restNames.length} others`
+      }`
     : '';
+
   const threadsText =
     threadsAmount === 1
-      ? `'${threads[0].content.title}'`
+      ? `‘${smarten(threads[0].content.title)}’`
       : `${threadsAmount} conversations`;
   // Brian and 3 others replied in 4 conversations
   // Brian replied in 'Thread title'
@@ -86,11 +51,17 @@ export default async (job: SendNewMessageEmailJob) => {
     0
   );
   const preheaderSubtext = restNames
-    ? ` and ${restNames.length === 1
-        ? `${restNames.length} other person`
-        : `${restNames.length} others`}...`
+    ? ` and ${
+        restNames.length === 1
+          ? `${restNames.length} other person`
+          : `${restNames.length} others`
+      }...`
     : '';
-  const preheader = `View ${newMessagesLength} new messages from ${firstName}${preheaderSubtext}`;
+  const preheader = `View ${
+    newMessagesLength === 1
+      ? `1 new message from `
+      : `${newMessagesLength} new messages from `
+  }${firstName}${preheaderSubtext}`;
 
   const unsubscribeToken = await generateUnsubscribeToken(
     recipient.userId,
@@ -106,13 +77,13 @@ export default async (job: SendNewMessageEmailJob) => {
         )
       : null;
 
-  if (!unsubscribeToken || !recipient.email || !recipient.username) return;
+  if (!unsubscribeToken || !recipient.email || !recipient.username)
+    return Promise.resolve();
   try {
     return sendEmail({
-      TemplateId: NEW_MESSAGE_TEMPLATE,
-      To: recipient.email,
-      Tag: SEND_NEW_MESSAGE_EMAIL,
-      TemplateModel: {
+      templateId: NEW_MESSAGE_TEMPLATE,
+      to: [{ email: recipient.email }],
+      dynamic_template_data: {
         subject,
         preheader,
         recipient,
@@ -129,8 +100,11 @@ export default async (job: SendNewMessageEmailJob) => {
           })),
         },
       },
+      userId: recipient.userId,
     });
   } catch (err) {
-    console.log(err);
+    console.error('❌ Error in job:\n');
+    console.error(err);
+    return Raven.captureException(err);
   }
 };
